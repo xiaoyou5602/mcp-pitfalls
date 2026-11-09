@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>自建 remote MCP server 踩坑手册</title>
+<meta name="description" content="Claude / ChatGPT 通用的自建 remote MCP server 踩坑手册">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/noto-serif-sc/400.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/noto-serif-sc/500.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/noto-serif-sc/700.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/noto-serif-sc/900.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/jetbrains-mono/400.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/jetbrains-mono/700.css" rel="stylesheet">
+<style>
+/* 书卷版式 · 暖白 + 豆沙 */
+:root {
+  --paper: #faf8f4;
+  --ink: #2a2622;
+  --ink-2: #6b645c;
+  --rule: #e6e1d8;
+  --accent: #94615c;
+  --code-bg: #f1eee8;
+  --code-inline-bg: #eeeae3;
+  --code-comment: #7f756c;
+  --code-string: #85524c;
+  --leader: #cfc6ba;
+
+  --f-body: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --fs: 12.4pt;
+  --lh: 1.95;
+  --fs-code: 9.3pt;
+}
+
+/* 深色：只在网页里生效，PDF 按浅色打印 */
+@media screen and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+  --paper: #1c1a17;
+  --ink: #e9e3da;
+  --ink-2: #a89f94;
+  --rule: #3a3530;
+  --accent: #c99189;
+  --code-bg: #25221e;
+  --code-inline-bg: #2d2925;
+  --code-comment: #8e8479;
+  --code-string: #d6a7a0;
+  --leader: #5a524a;
+  color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #1c1a17;
+  --ink: #e9e3da;
+  --ink-2: #a89f94;
+  --rule: #3a3530;
+  --accent: #c99189;
+  --code-bg: #25221e;
+  --code-inline-bg: #2d2925;
+  --code-comment: #8e8479;
+  --code-string: #d6a7a0;
+  --leader: #5a524a;
+  color-scheme: dark;
+}
+
+@page { size: A4; background: #faf8f4; }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; background: var(--paper); }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-weight: 500;
+  font-size: var(--fs);
+  line-height: var(--lh);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.page { max-width: 760px; margin: 0 auto; padding: 56px 24px 80px; }
+
+/* ---------- 开头 ----------
+   封面（版本行 + 两行标题 + 按症状找）→ 导语 → 目录。
+   网页首屏同时是链接预览截图（约 800×420），宽屏下封面上半截正好收在那条细线上；
+   PDF 里封面独占第 1 页，导语和目录在第 2 页。 */
+.doc-head { margin-bottom: 8px; }
+.cover-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rule);
+  font-family: "Cover Mono", var(--f-mono);
+  font-size: 8.3pt;
+  font-weight: 400;
+  letter-spacing: .08em;
+  color: var(--ink-2);
+}
+.cover-top { display: flex; flex-direction: column; padding-bottom: 26px; border-bottom: 1px solid var(--rule); }
+h1 { margin-top: 44px; font-family: "Cover Serif", var(--f-body); text-wrap: balance; }
+h1 .pre, h1 .main { display: block; }
+h1 .pre { font-size: 22pt; line-height: 1.3; font-weight: 700; color: var(--ink-2); }
+h1 .main { margin-top: 6px; font-size: 58pt; line-height: 1.12; font-weight: 900; letter-spacing: .04em; }
+.doc-sub {
+  margin-top: 14px;
+  font-family: "Cover Serif", var(--f-body);
+  font-size: 11.5pt;
+  font-weight: 700;
+  letter-spacing: .12em;
+  color: var(--accent);
+}
+
+.trace { margin-top: 30px; padding-bottom: 30px; border-bottom: 1px solid var(--ink); }
+.trace-label {
+  margin-bottom: 6px;
+  font-family: "Cover Serif", var(--f-body);
+  font-size: 10.5pt;
+  font-weight: 700;
+  letter-spacing: .3em;
+  color: var(--accent);
+}
+.trace ol { list-style: none; padding: 0; margin: 0; }
+.trace li { margin: 0; }
+.trace li + li { border-top: 1px dashed var(--rule); }
+.trace a {
+  display: grid;
+  grid-template-columns: 3.4em minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 14px;
+  padding: 9px 0;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 11.4pt;
+  line-height: 1.6;
+}
+.trace .st {
+  padding: 0;
+  background: none;
+  font-size: 16pt;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.trace .sym { min-width: 0; }
+.trace .to { font-size: 10pt; color: var(--ink-2); white-space: nowrap; }
+.trace .to::after { content: " →"; color: var(--accent); }
+.trace a:hover .sym, .trace a:focus-visible .sym { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.lede { margin-top: 28px; color: var(--ink-2); font-size: 11.6pt; }
+.lede strong { color: var(--ink); }
+
+.toc { margin: 30px 0 0; padding-top: 18px; border-top: 1px solid var(--rule); break-inside: avoid; }
+.toc-label {
+  font-size: 10.5pt;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: .3em;
+  margin-bottom: 10px;
+}
+.toc ol { list-style: none; padding: 0; margin: 0; }
+.toc li { margin: 0; break-inside: avoid; }
+.toc a {
+  display: flex;
+  align-items: baseline;
+  padding: 4px 0;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 11.6pt;
+  line-height: 1.7;
+}
+.toc li.plain + li.numbered, .toc li.numbered + li.plain { margin-top: 8px; }
+.toc .no { flex: none; width: 2.2em; color: var(--accent); font-weight: 700; }
+.toc code { background: none; padding: 0; font-size: .9em; }
+.toc .leader {
+  flex: 1;
+  min-width: 2em;
+  margin: 0 .6em;
+  border-bottom: 1px dotted var(--leader);
+  transform: translateY(-.35em);
+}
+.toc .pg {
+  flex: none;
+  min-width: 1.4em;
+  text-align: right;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 标题 ---------- */
+h2, h3 { color: var(--ink); break-after: avoid; break-inside: avoid; }
+h2 {
+  font-size: 17pt;
+  line-height: 1.5;
+  font-weight: 700;
+  margin: 46px 0 16px;
+  scroll-margin-top: 16px;
+}
+h2 .no {
+  display: block;
+  font-size: 10.5pt;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: .3em;
+  margin-bottom: 2px;
+}
+h2 .no::before { content: "第"; }
+h2 .no::after { content: "节"; }
+/* 没有节号的开篇和参考：用一小段色线占住节号的位置 */
+h2:not(:has(.no))::before {
+  content: "";
+  display: block;
+  width: 22px;
+  height: 2px;
+  margin: 10px 0 12px;
+  background: var(--accent);
+}
+h3 { font-size: 13pt; line-height: 1.6; font-weight: 700; margin: 26px 0 8px; }
+h3 .no { color: var(--accent); margin-right: .6em; }
+h2 code, h3 code { font-weight: 700; }
+
+/* ---------- 正文 ---------- */
+p { orphans: 3; widows: 3; }
+p.lead-in { break-after: avoid; }
+p + p, ul + p, ol + p, pre + p, table + p, blockquote + p, p + blockquote { margin-top: .75em; }
+strong { font-weight: 700; color: var(--ink); }
+a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+
+/* 现象 / 原因 / 修法 / 辨认 */
+p.labelled { margin-top: .9em; }
+.tag { font-weight: 700; color: var(--accent); margin-right: .55em; }
+.tag::after { content: "｜"; color: var(--rule); margin-left: .45em; font-weight: 400; }
+
+ul, ol { padding-left: 1.6em; margin: .6em 0 .7em; }
+li { margin: .25em 0; break-inside: avoid; }
+li:has(> ul, > ol) { break-inside: auto; }
+li::marker { color: var(--accent); }
+ol > li::marker { font-weight: 700; }
+ul.tasks { list-style: none; padding-left: .2em; }
+li.task { position: relative; padding-left: 1.7em; }
+li.task .box {
+  position: absolute; left: 0; top: .52em;
+  width: .82em; height: .82em;
+  border: 1.3px solid var(--accent); border-radius: 2px;
+}
+
+blockquote.note {
+  margin: .9em 0;
+  padding: 2px 0 2px 1em;
+  border-left: 2px solid var(--rule);
+  color: var(--ink-2);
+  font-size: 11.6pt;
+  break-inside: avoid;
+}
+
+/* ---------- 代码 ---------- */
+code, pre {
+  font-family: var(--f-mono), var(--f-body);
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
+:not(pre) > code {
+  font-size: .86em;
+  padding: .08em .36em;
+  border-radius: 3px;
+  background: var(--code-inline-bg);
+  overflow-wrap: anywhere;
+}
+pre {
+  margin: .8em 0 .9em;
+  padding: 12px 15px;
+  background: var(--code-bg);
+  border-left: 2px solid var(--accent);
+  border-radius: 2px;
+  font-size: var(--fs-code);
+  line-height: 1.7;
+  font-weight: 400;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  orphans: 4;
+  widows: 4;
+}
+pre code { font-size: inherit; }
+pre .c, pre .c1, pre .cm, pre .cs, pre .ch { color: var(--code-comment); }
+pre .s, pre .s1, pre .s2, pre .sb, pre .sa, pre .sc, pre .sd, pre .se, pre .sh, pre .sx, pre .sr, pre .ss, pre .dl { color: var(--code-string); }
+
+/* ---------- 表格 ---------- */
+table {
+  width: 100%;
+  margin: .9em 0 1em;
+  border-collapse: collapse;
+  font-size: .9em;
+  line-height: 1.6;
+}
+tr { break-inside: avoid; }
+th {
+  text-align: left;
+  font-weight: 700;
+  padding: 7px 12px 7px 0;
+  border-bottom: 1.5px solid var(--accent);
+  vertical-align: bottom;
+}
+td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+
+/* ---------- 参考 ---------- */
+ul.refs { list-style: none; padding-left: 0; }
+ul.refs li { margin: .45em 0; line-height: 1.55; }
+ul.refs .url {
+  display: block;
+  font-family: var(--f-mono);
+  font-size: 8.6pt;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 打印 ---------- */
+@media print {
+  .page { max-width: none; padding: 0; }
+  /* 第 1 页封面：标题在页面三分之一处，按症状找压在页底 */
+  .cover { height: 248mm; display: flex; flex-direction: column; break-after: page; }
+  .cover-top { flex: 1; }
+  .cover-top h1 { margin-top: 62mm; }
+  h1 .main { font-size: 66pt; }
+  .trace { margin-top: 26px; padding-bottom: 0; border-bottom: 0; }
+  /* 第 2 页只放导语和目录 */
+  .doc-head { break-after: page; }
+  .lede { margin-top: 6mm; }
+  h2 { scroll-margin-top: 0; }
+}
+@media screen {
+  .toc .leader, .toc .pg { display: none; }
+  /* 网页没有分页留白：节与节之间用整行细线和大段空白隔开 */
+  main > h2 { margin-top: 88px; padding-top: 44px; border-top: 1px solid var(--rule); }
+  h3 { margin-top: 36px; }
+}
+@media screen and (min-width: 700px) {
+  .page { padding-top: 40px; }
+  .cover-top { min-height: 344px; }
+  .cover-top h1 { margin-top: auto; }
+  h1 .main { font-size: 64pt; }
+  .toc ol { columns: 2; column-gap: 44px; }
+}
+
+/* ---------- 手机 ---------- */
+@media screen and (max-width: 600px) {
+  h1 { margin-top: 32px; }
+  h1 .pre { font-size: 19px; }
+  h1 .main { font-size: 46px; }
+  .doc-sub { font-size: 13px; }
+  .trace-label { font-size: 13px; }
+  .trace a { grid-template-columns: 2.9em minmax(0, 1fr); gap: 2px 12px; font-size: 15px; }
+  .trace .st { grid-row: span 2; font-size: 19px; }
+  .trace .to { grid-column: 2; font-size: 12.5px; }
+  main > h2 { margin-top: 60px; padding-top: 32px; }
+  h3 { margin-top: 30px; }
+  :root { --fs: 16.5px; --lh: 1.9; --fs-code: 12.5px; }
+  .page { padding: 40px 18px 64px; }
+  .lede, blockquote.note { font-size: 15px; }
+  .toc a { font-size: 15px; }
+  h2 { font-size: 21px; }
+  h2 .no, .toc-label { font-size: 13px; }
+  h3 { font-size: 17.5px; }
+  pre { margin-left: -4px; margin-right: -4px; padding: 11px 13px; }
+  ul.refs .url { font-size: 11.5px; }
+
+  table, thead, tbody, tr, th, td { display: block; }
+  thead { display: none; }
+  table { font-size: 15px; }
+  tr { padding: 10px 0; border-bottom: 1px solid var(--rule); }
+  tr:first-child { border-top: 1.5px solid var(--accent); }
+  td { padding: 1px 0; border: 0; }
+  td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: .05em;
+  }
+  td + td { margin-top: 4px; }
+}
+
+</style>
+</head>
+<body>
+<main class="page">
+<header class="doc-head"><div class="cover"><div class="cover-top"><p class="cover-meta"><span>Remote MCP · Streamable HTTP</span><span>SDK 1.29 → 1.32.1 · 2026-10</span></p><h1><span class="pre">自建 remote MCP server</span><span class="main">踩坑手册</span></h1><p class="doc-sub">Claude / ChatGPT 通用</p></div><div class="trace"><p class="trace-label">按症状找</p><ol><li><a href="#s4"><code class="st">403</code><span class="sym">公网 403、本机 200，body 是 <code>Invalid Host</code></span><span class="to">第二节</span></a></li><li><a href="#s5"><code class="st">500</code><span class="sym">该 401 的地方返回 500</span><span class="to">第三节</span></a></li><li><a href="#s3"><code class="st">404</code><span class="sym"><code>Couldn't register with … sign-in service</code></span><span class="to">第一节</span></a></li></ol></div></div><div class="lede">
+<p>面向：所有基于 Streamable HTTP 的 remote MCP server。文中以 Claude、ChatGPT 网页端（含桌面 / 手机 App）、Claude Code、Codex 等客户端为例进行说明与验证。示例技术栈为 Node.js + @modelcontextprotocol/sdk。内容来自自己部署远程 MCP 服务时实际踩到的坑，基于 SDK 1.29 写成，并于 2026-10 对照 1.32.1 复核。</p>
+<p>这些坑的共同特征：<strong>症状指向的位置和真正的原因不在一处</strong>。所以每条都先写现象。</p>
+</div><nav aria-label="目录" class="toc"><div class="toc-label">目录</div><ol><li class="plain"><a href="#s0"><span class="t">先分清两类客户端</span><span aria-hidden="true" class="leader"></span><span class="pg">3</span></a></li><li class="plain"><a href="#s1"><span class="t">先决条件</span><span aria-hidden="true" class="leader"></span><span class="pg">3</span></a></li><li class="numbered"><a href="#s2"><span class="no">零</span><span class="t">先用 SDK 自带的零件，别从零设计</span><span aria-hidden="true" class="leader"></span><span class="pg">4</span></a></li><li class="numbered"><a href="#s3"><span class="no">一</span><span class="t">authless 服务：三个探测端点</span><span aria-hidden="true" class="leader"></span><span class="pg">7</span></a></li><li class="numbered"><a href="#s4"><span class="no">二</span><span class="t">DNS rebinding 保护：那个 403 不是网关拦的</span><span aria-hidden="true" class="leader"></span><span class="pg">8</span></a></li><li class="numbered"><a href="#s5"><span class="no">三</span><span class="t"><code>requireBearerAuth</code> 的三个硬约束</span><span aria-hidden="true" class="leader"></span><span class="pg">8</span></a></li><li class="numbered"><a href="#s6"><span class="no">四</span><span class="t">自建 OAuth 授权服务器</span><span aria-hidden="true" class="leader"></span><span class="pg">10</span></a></li><li class="numbered"><a href="#s7"><span class="no">五</span><span class="t">测试这类服务时自己会踩的坑</span><span aria-hidden="true" class="leader"></span><span class="pg">11</span></a></li><li class="numbered"><a href="#s8"><span class="no">六</span><span class="t">从 Windows PowerShell 经 SSH 部署</span><span aria-hidden="true" class="leader"></span><span class="pg">12</span></a></li><li class="numbered"><a href="#s9"><span class="no">七</span><span class="t">排错速查</span><span aria-hidden="true" class="leader"></span><span class="pg">13</span></a></li><li class="plain"><a href="#s10"><span class="t">参考</span><span aria-hidden="true" class="leader"></span><span class="pg">14</span></a></li></ol></nav></header>
+
+<h2 id="s0"><span class="t">先分清两类客户端</span></h2>
+<p class="lead-in">这是理解后面所有坑的前提：</p>
+<ul>
+<li><strong>网页端</strong>（Claude 官方端、ChatGPT）：是平台的服务器替你去连 MCP 服务，请求从 Anthropic / OpenAI 的机房发出，不是从你的电脑。所以服务必须公网可达，而且两家都基本只认 OAuth。</li>
+<li><strong>本机客户端</strong>（Claude Code、Codex 等）：从你自己的电脑发请求。</li>
+</ul>
+<p class="lead-in">好消息是，<strong>做好 OAuth 之后，本机客户端不用另外配</strong>：</p>
+<ol>
+<li><strong>首选：在网页端授权一次。</strong>在 claude.ai 上用 OAuth 连好的连接器，登录同一账号的 Claude Code 和 Claude 桌面版会直接带过来，不用再配置，也不用再登录。</li>
+<li><strong>客户端自己走 OAuth。</strong>不登录账号、或者用别家客户端时，客户端会自己发起 OAuth，回跳到 <code>http://localhost:&lt;随机端口&gt;/callback</code>。你的服务得放行这种本机回跳才行（见第四节）。</li>
+<li><strong>静态 Bearer 请求头。</strong>前两条都走不通，或者客户端根本不支持 OAuth（比如一些自建 App），就在配置里填 <code>Authorization: Bearer ...</code>。这条路 SSH 隧道、内网地址也能用。</li>
+</ol>
+<h2 id="s1"><span class="t">先决条件</span></h2>
+<ul>
+<li><strong>给网页端用的服务必须公网可达。</strong>仅私网可达、位于内网或被防火墙阻断的地址直接添加是连不上的。要在防火墙放行的话，两家都公布了出口 IP（Anthropic 是 <code>160.79.104.0/21</code>，OpenAI 见其 IP 地址文档）。Claude 另外提供了给内网服务用的 MCP tunnels。</li>
+<li><strong>令牌绝不能放在 URL 查询串里</strong>（<code>?token=</code> 这种），MCP 授权规范明确禁止。网上有些“测试用”教程教你这么绕过 OAuth，token 会留在各种日志里，别学。</li>
+</ul>
+<p class="lead-in"><strong>各端支持的认证方式（2026-10，以官方文档为准）</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>Claude 网页端</th>
+<th>ChatGPT</th>
+<th>本机客户端</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-label="方式">OAuth 2.x + PKCE（CIMD / DCR 自动注册）</td>
+<td data-label="Claude 网页端">默认可用</td>
+<td data-label="ChatGPT">默认可用（且是唯一的鉴权方式）</td>
+<td data-label="本机客户端">可用（见上面第 1、2 条）</td>
+</tr>
+<tr>
+<td data-label="方式">静态请求头（API key / Bearer token）</td>
+<td data-label="Claude 网页端">Beta，仅部分组织可用</td>
+<td data-label="ChatGPT">不支持</td>
+<td data-label="本机客户端">直接填</td>
+</tr>
+<tr>
+<td data-label="方式">无认证（authless）</td>
+<td data-label="Claude 网页端">可用</td>
+<td data-label="ChatGPT">可用</td>
+<td data-label="本机客户端">可用</td>
+</tr>
+</tbody>
+</table>
+<p>个人开发者也可以添加自己的 MCP 服务，<strong>读和写工具都能用</strong>，OpenAI 开发者文档原话是 “ChatGPT supports both read and write tools from your server.”新文档没有按订阅档位写限制，具体能力按账号开通。OpenAI 帮助中心有一篇旧文章说个人档位“只能读”，跟新文档对不上，以新文档为准。</p>
+<p>另外，ChatGPT 会根据工具声明决定要不要先让你确认。纯读取的工具记得在定义里加 <code>annotations: { readOnlyHint: true }</code>，不然可能被当成会改数据的工具；会造成难以撤销后果的工具，标上 <code>destructiveHint: true</code>。</p>
+<p>所以只要服务里有私人数据、又想在网页端用，<strong>自建 OAuth 基本绕不开</strong>。好在 SDK 把大部分活干了，第零节和第四节讲怎么做。</p>
+<h2 id="s2"><span class="no">零</span><span class="t">先用 SDK 自带的零件，别从零设计</span></h2>
+<p class="lead-in">SDK 已经把鉴权协议和 HTTP 层的大部分活干了。新建服务时按这几条来，能绕开下面一到五节里大部分坑：</p>
+<ol>
+<li><strong>OAuth 端点用 <code>mcpAuthRouter</code></strong>，它会提供 <code>/authorize</code>、<code>/token</code>、<code>/register</code>、<code>/revoke</code> 和两个 <code>.well-known</code> 发现端点。你只需要实现一个 <code>OAuthServerProvider</code>（第四节列了安全要点）。</li>
+<li><strong>校验令牌用 <code>requireBearerAuth</code></strong>，但要满足第三节的三个硬约束，不然该 401 的地方会变 500。</li>
+<li><strong>Express 应用用 <code>createMcpExpressApp</code></strong>，并显式传 <code>allowedHosts</code>（见第二节）。</li>
+<li><strong><code>/mcp</code> 的 StreamableHTTP 会话处理照 SDK 示例写一份，抽成公共函数</strong>。如果你有不止一台服务，让它们共用这一份，不要每台各抄一遍。</li>
+</ol>
+<p class="lead-in">鉴权的组装大致是这样（主力走 OAuth；没配 OAuth 时退回只认静态 token，给本机客户端用）：</p>
+<pre><code class="language-js"><span class="kd">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nx">mcpAuthRouter</span><span class="p">,</span>
+<span class="w">  </span><span class="nx">getOAuthProtectedResourceMetadataUrl</span>
+<span class="p">}</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">require</span><span class="p">(</span><span class="s1">'@modelcontextprotocol/sdk/server/auth/router.js'</span><span class="p">)</span>
+<span class="kd">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nx">requireBearerAuth</span>
+<span class="p">}</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">require</span><span class="p">(</span><span class="s1">'@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js'</span><span class="p">)</span>
+
+<span class="kd">let</span><span class="w"> </span><span class="nx">authorize</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">oauth</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">issuerUrl</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">URL</span><span class="p">(</span><span class="nx">oauth</span><span class="p">.</span><span class="nx">issuer</span><span class="p">)</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">resourceServerUrl</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="ow">new</span><span class="w"> </span><span class="nx">URL</span><span class="p">(</span><span class="s1">'/mcp'</span><span class="p">,</span><span class="w"> </span><span class="nx">issuerUrl</span><span class="p">)</span>
+<span class="w">  </span><span class="nx">app</span><span class="p">.</span><span class="nx">use</span><span class="p">(</span>
+<span class="w">    </span><span class="nx">mcpAuthRouter</span><span class="p">({</span>
+<span class="w">      </span><span class="nx">provider</span><span class="o">:</span><span class="w"> </span><span class="nx">oauth</span><span class="p">,</span>
+<span class="w">      </span><span class="nx">issuerUrl</span><span class="p">,</span>
+<span class="w">      </span><span class="nx">resourceServerUrl</span><span class="p">,</span>
+<span class="w">      </span><span class="nx">resourceName</span><span class="o">:</span><span class="w"> </span><span class="s1">'服务名'</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="w">  </span><span class="p">)</span>
+<span class="w">  </span><span class="nx">authorize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">requireBearerAuth</span><span class="p">({</span>
+<span class="w">    </span><span class="nx">verifier</span><span class="o">:</span><span class="w"> </span><span class="nx">oauth</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">resourceMetadataUrl</span><span class="o">:</span><span class="w"> </span><span class="nx">getOAuthProtectedResourceMetadataUrl</span><span class="p">(</span><span class="nx">resourceServerUrl</span><span class="p">)</span>
+<span class="w">  </span><span class="p">})</span>
+<span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// 隧道模式：只给本机客户端用的静态 token</span>
+<span class="w">  </span><span class="nx">authorize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="nx">req</span><span class="p">,</span><span class="w"> </span><span class="nx">res</span><span class="p">,</span><span class="w"> </span><span class="nx">next</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="nx">accessToken</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">authorization</span><span class="w"> </span><span class="o">!==</span><span class="w"> </span><span class="sb">`Bearer </span><span class="si">${</span><span class="nx">accessToken</span><span class="si">}</span><span class="sb">`</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="nx">res</span><span class="p">.</span><span class="nx">status</span><span class="p">(</span><span class="mf">401</span><span class="p">).</span><span class="nx">json</span><span class="p">({</span><span class="w"> </span><span class="nx">error</span><span class="o">:</span><span class="w"> </span><span class="s1">'Unauthorized'</span><span class="w"> </span><span class="p">})</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">next</span><span class="p">()</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+<span class="nx">app</span><span class="p">.</span><span class="nx">all</span><span class="p">(</span><span class="s1">'/mcp'</span><span class="p">,</span><span class="w"> </span><span class="nx">authorize</span><span class="p">,</span><span class="w"> </span><span class="nx">handleMcp</span><span class="p">)</span><span class="w"> </span><span class="c1">// handleMcp 就是上面第 4 条抽出来的会话处理</span>
+</code></pre>
+<p><strong>两条路怎么选</strong>：对外地址（<code>PUBLIC_URL</code>）和同意页口令<strong>都配了</strong>才启用 OAuth，缺任何一项就退回只认静态 token 的隧道模式——不要做成“半开的门”。静态 token 至少 32 位随机值，启动时就检查，别等运行时才发现。</p>
+<p class="lead-in"><strong>新建服务的检查清单</strong>：</p>
+<ul class="tasks">
+<li class="task"><span aria-hidden="true" class="box"></span>用了 <code>mcpAuthRouter</code> / <code>requireBearerAuth</code> / <code>createMcpExpressApp</code>，没有手写协议端点</li>
+<li class="task"><span aria-hidden="true" class="box"></span>对外服务设了 <code>allowedHosts</code>（否则公网 403，见第二节）</li>
+<li class="task"><span aria-hidden="true" class="box"></span>静态 token ≥32 位且启动时检查</li>
+<li class="task"><span aria-hidden="true" class="box"></span>有 <code>/health</code> 端点</li>
+<li class="task"><span aria-hidden="true" class="box"></span>多台服务的端口 / token / 配置文件 / systemd 服务各自独立，不共用凭据</li>
+<li class="task"><span aria-hidden="true" class="box"></span>OAuth 注册测试同时覆盖你要支持的每个客户端域名（Claude 是 <code>claude.ai</code> 和 <code>claude.com</code>，ChatGPT 是 <code>chatgpt.com</code>），并确认会拒绝 http loopback、后缀伪装（<code>claude.ai.evil.com</code>）和陌生域名</li>
+<li class="task"><span aria-hidden="true" class="box"></span>写了走真实 HTTP 的集成测试（见第五节）</li>
+</ul>
+<h3>多台服务共用代码时，别只上传一个文件</h3>
+<p class="lead-in">几台服务共用一份公共模块（比如上面抽出来的会话处理）时，本地代码往往比线上新。<code>node --check server.js</code> 只检查这一个文件的语法，<strong>不会</strong>检查它 <code>require()</code> 进来的模块是不是导出了它要用的函数。所以“这次只改了一行”不等于“只传一个文件就行”：</p>
+<ol>
+<li>先看线上这台服务 <code>require()</code> 了哪些公共模块、这些模块现在导出了什么；</li>
+<li>列出这次改动真正依赖的全部文件，一起上传；</li>
+<li>覆盖公共模块会影响之后重启的<strong>所有</strong>引用它的服务，先确认兼容，再建好整批回退点；</li>
+<li>一次只重启一台，逐台验证 health、OAuth 元数据、匿名请求是否 401、客户端能否正常调用。</li>
+</ol>
+<h2 id="s3"><span class="no">一</span><span class="t">authless 服务：三个探测端点</span></h2>
+<p class="labelled"><span class="tag">现象</span>在 Claude 添加自定义连接器时报 <code>Couldn't register with XXX's sign-in service</code>（其他客户端的报错文字不同，但原因一样）。</p>
+<p class="labelled lead-in"><span class="tag">原因</span>按 MCP 授权规范，客户端在连接前会先探测这三个地址，判断服务器要不要 OAuth：</p>
+<ol>
+<li><code>GET /.well-known/oauth-protected-resource</code></li>
+<li><code>GET /.well-known/oauth-authorization-server</code></li>
+<li><code>POST /register</code></li>
+</ol>
+<p>只要响应不标准（纯文本、HTML 错误页、200 加奇怪 body），客户端就会推断「这个服务器需要 OAuth 但没配好」，转而走动态注册流程然后失败。</p>
+<p class="labelled lead-in"><span class="tag">修法</span>让这三个端点返回<strong>标准的 404 + JSON</strong>：</p>
+<pre><code class="language-js"><span class="c1">// 必须排在所有鉴权检查之前，否则 401 又会让客户端以为要走 OAuth</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span>
+<span class="w">  </span><span class="nx">req</span><span class="p">.</span><span class="nx">url</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="s1">'/.well-known/oauth-protected-resource'</span><span class="w"> </span><span class="o">||</span>
+<span class="w">  </span><span class="nx">req</span><span class="p">.</span><span class="nx">url</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="s1">'/.well-known/oauth-authorization-server'</span><span class="w"> </span><span class="o">||</span>
+<span class="w">  </span><span class="nx">req</span><span class="p">.</span><span class="nx">url</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="s1">'/register'</span>
+<span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nx">res</span><span class="p">.</span><span class="nx">writeHead</span><span class="p">(</span><span class="mf">404</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s1">'Content-Type'</span><span class="o">:</span><span class="w"> </span><span class="s1">'application/json'</span><span class="w"> </span><span class="p">})</span>
+<span class="w">  </span><span class="nx">res</span><span class="p">.</span><span class="nx">end</span><span class="p">(</span><span class="nb">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">({</span><span class="w"> </span><span class="nx">error</span><span class="o">:</span><span class="w"> </span><span class="s1">'not_found'</span><span class="w"> </span><span class="p">}))</span>
+<span class="w">  </span><span class="k">return</span>
+<span class="p">}</span>
+</code></pre>
+<p>四个要点缺一不可：状态码是 <strong>404</strong>、Content-Type 是 <strong>application/json</strong>、body 是<strong>合法 JSON</strong>、位置在<strong>鉴权之前</strong>。</p>
+<blockquote class="note">
+<p>用 <code>mcpAuthRouter</code> 做 OAuth 的服务不需要这一段——那些端点由 SDK 提供真实内容。</p>
+</blockquote>
+<h2 id="s4"><span class="no">二</span><span class="t">DNS rebinding 保护：那个 403 不是网关拦的</span></h2>
+<p class="labelled"><span class="tag">现象</span>本机 <code>curl 127.0.0.1:PORT/health</code> 返回 200，公网走域名访问同一个路径返回 403。很容易被当成 Cloudflare Access、WAF 或反向代理的问题，然后往错误的方向查很久。</p>
+<p class="labelled"><span class="tag">辨认</span>看响应体和响应头。</p>
+<pre><code>X-Powered-By: Express
+{"jsonrpc":"2.0","error":{"code":-32000,"message":"Invalid Host: your.domain"},"id":null}
+</code></pre>
+<p>带 <code>X-Powered-By: Express</code> 和 JSON-RPC 结构，就说明<strong>是源站自己拒绝的</strong>，跟网关无关。Cloudflare Access 的拒绝页是 HTML。</p>
+<p class="labelled"><span class="tag">原因</span><code>createMcpExpressApp()</code> 在绑定 localhost 时会自动开启 DNS rebinding 保护，只接受 <code>127.0.0.1</code> / <code>localhost</code> / <code>::1</code> 的 Host 头。经域名进来的请求全被 403。</p>
+<p class="labelled"><span class="tag">修法</span>把对外域名显式加进白名单。</p>
+<pre><code class="language-js"><span class="nx">createMcpExpressApp</span><span class="p">({</span>
+<span class="w">  </span><span class="nx">allowedHosts</span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="s1">'127.0.0.1'</span><span class="p">,</span><span class="w"> </span><span class="s1">'localhost'</span><span class="p">,</span><span class="w"> </span><span class="s1">'[::1]'</span><span class="p">,</span><span class="w"> </span><span class="s1">'your.domain'</span><span class="p">]</span>
+<span class="p">})</span>
+</code></pre>
+<p>校验不看端口（内部用 URL API 取 hostname），所以只填主机名，不要带端口。不要为了图省事绑到 <code>0.0.0.0</code> 把保护整个关掉——它挡的是真实的攻击面。</p>
+<h2 id="s5"><span class="no">三</span><span class="t"><code>requireBearerAuth</code> 的三个硬约束</span></h2>
+<p>这三条都会让<strong>本该 401 的响应变成 500</strong>，从外面看完全一样，得读 SDK 源码才分得清。</p>
+<h3><span class="no">3.1</span>AuthInfo 必须带 <code>expiresAt</code></h3>
+<p>中间件会检查 <code>verifyAccessToken</code> 返回的 <code>expiresAt</code> 是不是数字，不是就当无效令牌处理。所以返回的对象<strong>必须</strong>有 <code>expiresAt</code>（秒级时间戳）。如果你同时支持一个不会过期的静态 token，也得给它编一个滚动的过期时间，否则那条路会被判成无效令牌——<strong>看起来就像认证配置错了</strong>。</p>
+<h3><span class="no">3.2</span>错误必须是 <code>OAuthError</code> 的子类</h3>
+<p>中间件用 <code>instanceof</code> 分派状态码。抛普通 <code>Error</code> 会落到兜底分支，变成 500。</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>该抛的错误</th>
+<th>抛错了的后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-label="场景"><code>verifyAccessToken</code> 校验失败</td>
+<td data-label="该抛的错误"><code>InvalidTokenError</code></td>
+<td data-label="抛错了的后果">401 → 500</td>
+</tr>
+<tr>
+<td data-label="场景"><code>registerClient</code> 拒绝注册</td>
+<td data-label="该抛的错误"><code>InvalidClientMetadataError</code></td>
+<td data-label="抛错了的后果">400 → 500</td>
+</tr>
+<tr>
+<td data-label="场景">作用域不足</td>
+<td data-label="该抛的错误"><code>InsufficientScopeError</code></td>
+<td data-label="抛错了的后果">403 → 500</td>
+</tr>
+</tbody>
+</table>
+<p>都从 <code>@modelcontextprotocol/sdk/server/auth/errors.js</code> 导入。</p>
+<h3><span class="no">3.3</span>会进响应头的错误消息必须是纯 ASCII</h3>
+<p class="lead-in">中间件把 message 直接拼进 <code>WWW-Authenticate</code>：</p>
+<pre><code class="language-js"><span class="p">;</span><span class="sb">`Bearer error="</span><span class="si">${</span><span class="nx">errorCode</span><span class="si">}</span><span class="sb">", error_description="</span><span class="si">${</span><span class="nx">message</span><span class="si">}</span><span class="sb">"`</span>
+</code></pre>
+<p>HTTP 头不允许非 ASCII 字符。写中文的错误消息 → Node 抛 <code>TypeError [ERR_INVALID_CHAR]</code> → <strong>401 又退化成 500</strong>。</p>
+<p><code>InvalidTokenError</code> 的消息一律用英文。进 JSON body 的错误（token / register 端点）可以用中文，但统一用 ASCII 更省心。</p>
+<h2 id="s6"><span class="no">四</span><span class="t">自建 OAuth 授权服务器</span></h2>
+<p class="lead-in">SDK 自带脚手架，协议部分不用自己写：</p>
+<pre><code>server/auth/router.js          mcpAuthRouter：/authorize /token /register /revoke + 两个 .well-known
+server/auth/handlers/          各端点实现
+server/auth/middleware/        requireBearerAuth
+server/auth/provider.js        要实现的接口
+</code></pre>
+<p>实现 <code>OAuthServerProvider</code> 即可。SDK 的 <code>mcpAuthRouter</code> 已经在元数据里声明了 <code>code_challenge_methods_supported: ["S256"]</code> 和 public client（<code>none</code>），这是 Claude 和 ChatGPT 都要求的；它没声明 CIMD，两家会自动退回用动态注册（DCR），不影响使用。</p>
+<p class="lead-in">几个安全要点：</p>
+<ul>
+<li><strong>动态注册（DCR）是对所有人开放的</strong>，这是规范要求，拦不住。所以真正的门是 <code>/authorize</code> 的同意页——它必须有一道只有你本人知道的凭据（口令 / PIN），否则任何人注册一个客户端就能换到令牌。口令最好再加上“错几次就锁定”。</li>
+<li><strong>必须校验 <code>redirect_uri</code></strong>：限定 https + 受信域名白名单。判断域名时要用 <code>hostname === host || hostname.endsWith("." + host)</code>，直接 <code>includes</code> 会被 <code>claude.ai.evil.com</code> 这种后缀伪装骗过去。</li>
+<li><strong>同意页要显示客户端名和回跳地址</strong>，让人能在授权前看出异常。</li>
+<li><strong>authorization code 一次性、短期</strong>，并绑定 client_id、redirect_uri 和 code_challenge；换取令牌时逐项比对。</li>
+<li><strong>refresh token 轮换</strong>：用掉即作废。</li>
+<li><strong>令牌落盘只存摘要</strong>（SHA-256），不存明文。</li>
+<li>回跳地址必须<strong>精确匹配</strong>，差一个字符最后一步就失败：
+<ul>
+<li>Claude 网页端：<code>https://claude.ai/api/mcp/auth_callback</code></li>
+<li>ChatGPT：形如 <code>https://chatgpt.com/connector/oauth/{callback_id}</code>，每个连接不一样，以 ChatGPT 管理页上显示的为准。白名单按域名放行 <code>chatgpt.com</code> 就不用逐个登记。</li>
+</ul>
+</li>
+<li>Claude 添加连接器时 OAuth Client ID 一般可留空（自动注册）。如果你想填，就在服务端预先注册一个 client 把 id 给它；<code>token_endpoint_auth_method: "none"</code> 的 public client 没有 secret，Secret 栏留空即可。</li>
+<li><strong>受信域名白名单要按「这台服务实际给哪几端用」来配，不要照抄另一台</strong>。我有一台服务只给 ChatGPT 用，白名单只写了 <code>chatgpt.com</code>；另一台照抄之后，Claude 在注册这一步就被 400，看起来像客户端 bug。Claude 要 <code>claude.ai</code> 和 <code>claude.com</code> 两个。</li>
+<li><strong>本机客户端自己走 OAuth 时，回跳是 <code>http://localhost:&lt;随机端口&gt;/callback</code></strong>（比如在终端里 <code>claude mcp add</code> 后登录），是 http loopback，过不了「https + 受信域名」这道校验。Claude 官方文档建议授权服务器对 <code>localhost</code> 和 <code>127.0.0.1</code> 做不看端口的匹配来放行它；代价是本机任何进程都能来注册，不过拿令牌仍要过同意页的口令。我选择不放：终端用继承来的账号连接器，或者在本机配置里填静态 Bearer，就够了（我有一台服务就是踩了这个坑之后改成静态 Bearer 的）。</li>
+<li><strong>换域名要连 OAuth issuer 一起换</strong>。issuer 通常就是 <code>PUBLIC_URL</code>，而它往往同时是 <code>allowedHosts</code> 的来源；只改反向代理不改配置，不是 issuer 对不上就是 403。换完已授权的客户端要重新授权。</li>
+</ul>
+<h2 id="s7"><span class="no">五</span><span class="t">测试这类服务时自己会踩的坑</span></h2>
+<p>前四类坑里有几个，本地单元测试<strong>一个都抓不到</strong>，因为它们直接调 provider，绕过了中间件和真实的 HTTP 层。</p>
+<ul>
+<li><strong>必须写走真实 HTTP 的集成测试</strong>：<code>app.listen(0)</code> 起随机端口，然后发真请求。「测试覆盖到那一行」不等于「测试验证了那个行为」。</li>
+<li><strong>fetch 的 header 值必须是 ASCII</strong>。用中文当假 token（<code>Bearer 瞎编的</code>）会让 undici 在<strong>构造请求时</strong>就抛错，请求根本没发出去，你以为测了其实没测。</li>
+<li><strong>fetch 不能覆盖 <code>Host</code></strong>（forbidden header name）。要验证 Host 白名单，必须用 <code>node:http</code> 直接发请求。</li>
+<li>断言要覆盖<strong>完整的请求形状</strong>，不只是自己关心的那个片段。我有过一个测试传了 <code>memoryType: "diary"</code> 却只断言了另一个字段，于是漏掉了「过滤值少了前缀」这个让整个功能失效的 bug。</li>
+</ul>
+<h2 id="s8"><span class="no">六</span><span class="t">从 Windows PowerShell 经 SSH 部署</span></h2>
+<p>线上目录不一定是 Git 仓库，部署前先从实际的 systemd 服务配置核对 <code>WorkingDirectory</code>、<code>ExecStart</code> 和依赖路径，不要凭本地模板猜。</p>
+<p class="lead-in">安全顺序固定为：</p>
+<ol>
+<li>SSH 只读检查服务、监听端口、服务配置和目标文件，确认这次要改的精确范围；</li>
+<li>在服务器上按时间戳备份将被覆盖的精确文件；</li>
+<li>把候选文件及完整的 <code>require()</code> 依赖一起上传到临时目录，先逐个执行 <code>node --check</code>；</li>
+<li>检查通过后才覆盖生产文件；共享模块一次只带一台服务重启验收；</li>
+<li>验证 <code>systemctl is-active</code>、本机 <code>/health</code>、公网入口和客户端行为；有鉴权的 <code>/mcp</code> 还要确认匿名请求返回 401；</li>
+<li>任一步失败就停止扩大变更，用刚建立的备份回退。</li>
+</ol>
+<h3>PowerShell 会吃掉远程命令里的引号</h3>
+<p class="labelled"><span class="tag">现象</span>在 PowerShell 中执行 <code>ssh host "复杂 bash 命令"</code>，里面的双引号经过 PowerShell、Windows 原生命令参数解析和远端 shell 多层处理后丢失。远端最终收到裸括号或残缺 JSON，常见报错是 <code>syntax error near unexpected token '('</code>。这不是 bash 脚本本身有问题。</p>
+<p class="lead-in">复杂脚本不要继续堆转义。把完整脚本写进 PowerShell here-string，以 UTF-8 编成 base64，远端只接收由 ASCII 字符组成的短命令：</p>
+<pre><code class="language-powershell"><span class="nv">$remoteScript</span> <span class="p">=</span> <span class="sh">@'</span>
+<span class="sh">set -euo pipefail</span>
+<span class="sh">node --check /tmp/mcp-candidate/server.js</span>
+<span class="sh">'@</span>
+<span class="nv">$encodedScript</span> <span class="p">=</span> <span class="no">[Convert]</span><span class="p">::</span><span class="n">ToBase64String</span><span class="p">(</span>
+  <span class="no">[Text.Encoding]</span><span class="p">::</span><span class="n">UTF8</span><span class="p">.</span><span class="n">GetBytes</span><span class="p">(</span><span class="nv">$remoteScript</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">ssh</span> <span class="n">my-vps</span> <span class="s2">"printf '%s' '$encodedScript' | base64 -d | bash"</span>
+</code></pre>
+<p class="lead-in">需要给远端 <code>curl --data</code> 传 JSON 时同样先编码正文，再从标准输入交给 curl，避免让 JSON 穿过多层引号解析：</p>
+<pre><code class="language-powershell"><span class="nv">$requestJson</span> <span class="p">=</span> <span class="s1">'{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</span>
+<span class="nv">$encodedJson</span> <span class="p">=</span> <span class="no">[Convert]</span><span class="p">::</span><span class="n">ToBase64String</span><span class="p">(</span>
+  <span class="no">[Text.Encoding]</span><span class="p">::</span><span class="n">UTF8</span><span class="p">.</span><span class="n">GetBytes</span><span class="p">(</span><span class="nv">$requestJson</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">ssh</span> <span class="n">my-vps</span> <span class="s2">"printf '%s' '$encodedJson' | base64 -d | curl --data-binary @- http://127.0.0.1:PORT/mcp"</span>
+</code></pre>
+<p>base64 只是编码，不是加密。token、口令等凭据不要写进脚本、命令行、仓库或日志；需要认证的探测应该从服务器上权限受控的配置文件读取，且输出不回显凭据。</p>
+<h2 id="s9"><span class="no">七</span><span class="t">排错速查</span></h2>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>先查这里</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td data-label="现象"><code>Couldn't register with ... sign-in service</code></td>
+<td data-label="先查这里">authless 服务的三个探测端点是否返回 404 + JSON</td>
+</tr>
+<tr>
+<td data-label="现象">公网 403、本机 200，body 是 JSON-RPC <code>Invalid Host</code></td>
+<td data-label="先查这里"><code>allowedHosts</code> 没配对外域名</td>
+</tr>
+<tr>
+<td data-label="现象">该 401 的地方返回 500</td>
+<td data-label="先查这里">AuthInfo 缺 <code>expiresAt</code>；错误不是 <code>OAuthError</code> 子类；错误消息有非 ASCII</td>
+</tr>
+<tr>
+<td data-label="现象">该 400 的注册返回 500</td>
+<td data-label="先查这里"><code>registerClient</code> 抛的不是 <code>InvalidClientMetadataError</code></td>
+</tr>
+<tr>
+<td data-label="现象">授权最后一步失败</td>
+<td data-label="先查这里">redirect_uri 与注册时不完全一致</td>
+</tr>
+<tr>
+<td data-label="现象">注册就报 <code>redirect_uris must be https URLs...</code></td>
+<td data-label="先查这里">那端的回跳不在受信名单里（http loopback、别的域名）</td>
+</tr>
+<tr>
+<td data-label="现象">网页端连不上但服务本机正常</td>
+<td data-label="先查这里">服务是否公网可达（网页端从平台机房连，不是从你的电脑）</td>
+</tr>
+<tr>
+<td data-label="现象">本机客户端能连、网页端不能</td>
+<td data-label="先查这里">同上；再查 OAuth 白名单里有没有那家的域名</td>
+</tr>
+</tbody>
+</table>
+<h2 id="s10"><span class="t">参考</span></h2>
+<ul class="refs">
+<li><a href="https://claude.com/docs/connectors/building/authentication">Authentication for connectors（Claude 官方：连接器认证要求）</a><span class="url">claude.com/docs/connectors/building/authentication</span></li>
+<li><a href="https://claude.com/docs/connectors/custom/remote-mcp">Add a connector that isn't in the directory（Claude 官方：添加自定义连接器）</a><span class="url">claude.com/docs/connectors/custom/remote-mcp</span></li>
+<li><a href="https://developers.openai.com/apps-sdk/build/auth">Apps SDK Authentication（OpenAI 官方：ChatGPT 连接 MCP 的认证要求）</a><span class="url">developers.openai.com/apps-sdk/build/auth</span></li>
+<li><a href="https://developers.openai.com/api/docs/guides/custom-mcp-server">Create custom MCP server（OpenAI 官方：ChatGPT 支持读写工具）</a><span class="url">developers.openai.com/api/docs/guides/custom-mcp-server</span></li>
+<li><a href="https://developers.openai.com/plugins/build/mcp-server">Build an MCP server（OpenAI 官方：readOnlyHint 等工具声明）</a><span class="url">developers.openai.com/plugins/build/mcp-server</span></li>
+<li><a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization">MCP 授权规范</a><span class="url">modelcontextprotocol.io/specification/2025-11-25/basic/authorization</span></li>
+</ul>
+
+</main>
+</body>
+</html>
